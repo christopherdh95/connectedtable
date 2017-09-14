@@ -1,0 +1,284 @@
+package com.server.ui.component;
+
+import java.awt.Component;
+import java.awt.event.ActionEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.io.IOException;
+import java.util.Map;
+
+import javax.imageio.ImageIO;
+import javax.swing.ImageIcon;
+import javax.swing.JMenuItem;
+import javax.swing.JPopupMenu;
+import javax.swing.JSeparator;
+import javax.swing.JTable;
+import javax.swing.ListSelectionModel;
+import javax.swing.SwingConstants;
+import javax.swing.SwingUtilities;
+import javax.swing.table.AbstractTableModel;
+import javax.swing.table.DefaultTableCellRenderer;
+import javax.swing.table.TableCellRenderer;
+import javax.swing.table.TableColumn;
+
+import com.server.other.RemotePair;
+import com.server.other.ResourceLoader;
+import com.server.socket.SecuritySocketServer;
+import com.server.socket.remote.RemoteDevice;
+import com.server.ui.ServerFrame;
+
+public class ConnectedRemoteDeviceTable extends JTable implements SecuritySocketServer.ServerConnectionCallback{
+	
+	/**
+	 * 
+	 */
+	private static final long serialVersionUID = -5212728069583044270L;
+	
+	private SecuritySocketServer server;
+	
+	private ConnectedRemoteDeviceTableModel mModel;
+	private MouseAdapter 					mClickListener;
+	private JMenuItem						showTimeLine;
+	private JMenuItem						removeMonitor;
+	private JMenuItem						removeMobile;
+	private JMenuItem						removePair;
+	
+	private int clickRow;
+	private int clickCol;
+	private RemotePair rowPair;
+	
+	public ConnectedRemoteDeviceTable(SecuritySocketServer server) throws IOException {
+		this.server = server;
+		server.registerServerConnectionCallback(this);
+		mModel = new ConnectedRemoteDeviceTableModel(server.getRemotePairs());
+		setModel(mModel);
+		
+		showTimeLine = new JMenuItem("Show Time Line", new ImageIcon(ImageIO.read(ResourceLoader.load("ic_show_chart_black_24dp.png"))));
+		showTimeLine.setFont(ServerFrame.GLOBAL_FONT_PLAIN);
+		showTimeLine.addActionListener((ActionEvent e) -> {
+			try {
+				new MeasurementChartFrame(rowPair.getSerialMonitor());
+			} catch (IOException e1) {
+				System.out.println("Open XY Plot Chart Error");
+			}
+		});
+		
+		removeMonitor = new JMenuItem("Remove Monitor", new ImageIcon(ImageIO.read(ResourceLoader.load("ic_visibility_black_24dp.png"))));
+		removeMonitor.setFont(ServerFrame.GLOBAL_FONT_PLAIN);
+		removeMonitor.addActionListener((ActionEvent e) -> {
+			if(rowPair.getMonitor() != null)
+				try {
+					rowPair.getMonitor().close();
+				} catch (IOException e1) {
+					//
+				}
+		});
+		
+		removeMobile = new JMenuItem("Remove Mobile", new ImageIcon(ImageIO.read(ResourceLoader.load("ic_smartphone_black_24dp.png"))));
+		removeMobile.setFont(ServerFrame.GLOBAL_FONT_PLAIN);
+		removeMobile.addActionListener((ActionEvent e) -> {
+			if(rowPair.getMobile() != null)
+				try {
+					rowPair.getMobile().close();
+				} catch (IOException e1) {
+					//
+			}
+		});
+
+		removePair = new JMenuItem("Remove Pair", new ImageIcon(ImageIO.read(ResourceLoader.load("ic_delete_forever_black_24dp.png"))));
+		removePair.setFont(ServerFrame.GLOBAL_FONT_PLAIN);
+		removePair.addActionListener((ActionEvent e) -> {
+			try {
+				rowPair.getMonitor().close();
+				rowPair.getMobile().close();
+			} catch (IOException e1) {
+				//
+			}
+		});
+		
+		mClickListener = new TableMouseAdapter();
+		
+		modifiyConfigeration();
+		addMouseListener(mClickListener);
+		getTableHeader().setReorderingAllowed(false);
+	    setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
+		setFillsViewportHeight(true);
+		setDragEnabled(false);
+	}
+	
+    private void modifiyConfigeration() {
+		for (int col = 0; col < getColumnCount(); col++) {
+	        int maxWidth = 0;
+	        for (int row = 0; row < getRowCount(); row++) {
+	            TableCellRenderer rend = getCellRenderer(row, col);
+	            Object value = getValueAt(row, col);
+	            Component comp = rend.getTableCellRendererComponent(this, value, false, false, row, col);
+	            maxWidth = Math.max(comp.getPreferredSize().width, maxWidth);
+	        }
+	        TableColumn column = columnModel.getColumn(col);
+	        TableCellRenderer headerRenderer = column.getHeaderRenderer();
+	        if (headerRenderer == null) {
+	            headerRenderer = getTableHeader().getDefaultRenderer();
+	        }
+	        Object headerValue = column.getHeaderValue();
+	        Component headerComp = headerRenderer.getTableCellRendererComponent(this, headerValue, false, false, 0, col);
+	        maxWidth = Math.max(maxWidth, headerComp.getPreferredSize().width);
+	        // note some extra padding
+	        column.setPreferredWidth(maxWidth + 6);//IntercellSpacing * 2 + 2 * 2 pixel instead of taking this value from Borders
+		}
+		
+
+		DefaultTableCellRenderer rightRenderer = new DefaultTableCellRenderer();
+		rightRenderer.setHorizontalAlignment(SwingConstants.CENTER);
+		for(int i = 0; i < 3; i++)
+			getColumnModel().getColumn(i).setCellRenderer(rightRenderer);
+    }
+    
+    public void detach() {
+    	server.unRegisterServerConnectionCallback(this);
+    }
+	
+	private static class ConnectedRemoteDeviceTableModel extends AbstractTableModel {
+		/**
+		 * 
+		 */
+		private static final long serialVersionUID = 8125194375516799846L;
+
+		private final String COLUMNS[] = {"ID", "Monitor Name", "Mobile Name"};
+		
+		private Map<Integer, RemotePair> remoteMap;
+		private RemotePair remoteList[];
+		
+		public ConnectedRemoteDeviceTableModel(Map<Integer, RemotePair> remoteMap) {
+			this.remoteMap = remoteMap;
+			this.remoteList = remoteMap.values().toArray(new RemotePair[0]);
+	    	fireTableDataChanged();
+		}
+		@Override
+	    public String getColumnName(int col) {
+			synchronized(this) {
+				return COLUMNS[col];
+			}
+	    }
+		@Override
+	    public int getRowCount() {
+			synchronized(this) {
+				return remoteList.length;
+			}
+	    }
+		@Override
+	    public int getColumnCount() {
+	    	return COLUMNS.length;
+	    }
+		@Override
+	    public Object getValueAt(int row, int col) {
+			synchronized(this) {
+		    	if(col == 0)
+		    		return Integer.toString(remoteList[row].getIdentity());
+		    	if(col == 1)
+		    		return (remoteList[row].getMonitor() != null ? remoteList[row].getMonitor().getName() : "");
+		    	if(col == 2)
+		    		return (remoteList[row].getMobile() != null ? remoteList[row].getMobile().getName() : "");
+		    	return "WTF";
+			}
+	    }
+		@Override
+	    public boolean isCellEditable(int row, int col) {
+	    	return false;
+	    }
+	    
+		public RemotePair getRemotePair(int row) {
+			return remoteList[row];
+		}
+		
+	    synchronized public void addMonitor(RemoteDevice monitor) {
+	    	if(remoteMap.containsKey(monitor.getIdentity()))
+	    		remoteMap.get(monitor.getIdentity()).setMonitor(monitor);
+	    	else
+		    	remoteMap.put(monitor.getIdentity(), new RemotePair(monitor, null));
+		    remoteList = remoteMap.values().toArray(new RemotePair[0]);
+	    	fireTableDataChanged();
+	    }
+	    
+	    synchronized public void addMobile(RemoteDevice mobile) {
+	    	if(remoteMap.containsKey(mobile.getIdentity()))
+	    		remoteMap.get(mobile.getIdentity()).setMobile(mobile);
+	    	else
+		    	remoteMap.put(mobile.getIdentity(), new RemotePair(null, mobile));
+		    remoteList = remoteMap.values().toArray(new RemotePair[0]);
+	    	fireTableDataChanged();
+	    }
+	    
+	    synchronized public void removeMonitor(RemoteDevice monitor) {
+	    	if(remoteMap.get(monitor.getIdentity()).getMobile() == null)
+	    		remoteMap.remove(monitor.getIdentity());
+	    	else
+		    	remoteMap.get(monitor.getIdentity()).setMonitor(null);
+		    remoteList = remoteMap.values().toArray(new RemotePair[0]);
+	    	fireTableDataChanged();
+	    }
+
+	    synchronized public void removeMobile(RemoteDevice mobile) {
+	    	if(remoteMap.get(mobile.getIdentity()).getMonitor() == null)
+	    		remoteMap.remove(mobile.getIdentity());
+	    	else
+		    	remoteMap.get(mobile.getIdentity()).setMobile(null);
+		    remoteList = remoteMap.values().toArray(new RemotePair[0]);
+	    	fireTableDataChanged();
+	    }
+	    
+	    public void removeRow(int identity) {
+	    	remoteMap.remove(identity);
+	    	remoteList = remoteMap.values().toArray(new RemotePair[0]);
+	    	fireTableDataChanged();
+	    }
+	}
+	
+	public class TableMouseAdapter extends MouseAdapter {
+	    public void mouseClicked(MouseEvent e) {
+	    	if(SwingUtilities.isRightMouseButton(e)) {
+				clickRow = rowAtPoint(e.getPoint());
+		        clickCol = columnAtPoint(e.getPoint());
+		        if(clickRow != -1 && clickCol != -1) {
+		        	setRowSelectionInterval(clickRow, clickRow);
+			    	rowPair = mModel.getRemotePair(clickRow);
+			    	JPopupMenu popupMenu = new JPopupMenu();
+			    	popupMenu.add(showTimeLine);
+			    	popupMenu.add(new JSeparator());
+		        	switch(clickCol) {
+		        		case 0:
+		        			popupMenu.add(removePair);
+		        			break;
+		        		case 1:
+		        			popupMenu.add(removeMonitor);
+		        			break;
+		        		case 2:
+		        			popupMenu.add(removeMobile);
+		        			break;
+		        	}
+		        	popupMenu.show(ConnectedRemoteDeviceTable.this, e.getX(), e.getY());
+		        }
+	    	}
+	    }
+	}
+	
+	@Override
+	public void onConnectMonitor(RemoteDevice monitor) {
+		mModel.addMonitor(monitor);
+	}
+
+	@Override
+	public void onConnectMobile(RemoteDevice mobile) {
+		mModel.addMobile(mobile);
+	}
+
+	@Override
+	public void onDisconnectMonitor(RemoteDevice monitor) {
+		mModel.removeMonitor(monitor);
+	}
+
+	@Override
+	public void onDisconnectMobile(RemoteDevice mobile) {
+		mModel.removeMobile(mobile);
+	}
+}
